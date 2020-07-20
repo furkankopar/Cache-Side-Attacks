@@ -36,7 +36,7 @@ entity SI_FSM_logic is
 end entity SI_FSM_logic;
 
 architecture rtl of SI_FSM_logic is
-type states is (s0,s1,s2,s3);
+type states is (s0,s1,s2,s3,s4,s5);
 signal	addr_index		: 	unsigned(INDEX_BITS-1 downto 0);
 signal	prev_addr_reg		: 	unsigned(CPU_ADDR_BITS-1 downto 0);
 
@@ -145,9 +145,18 @@ FSM_comb : process(process_ID,safe_process_ID,cache_HM,curState,different_index)
 		safety_stt <= '0';
 		case (curState) is
 			when s0 =>
-				if (different_index and (cache_HM = '1' or cache_HM = '0')) then
+				if (process_ID = safe_process_ID) then
+					if (different_index and (cache_HM = '1' or cache_HM = '0')) then
 						nextState <= s1;
 						safety_stt <= '0';
+						--FSM_TRANSITION <= "S0SE";
+					end if;
+				else
+					if (different_index and (cache_HM = '1' or cache_HM = '0')) then
+						nextState <= s2;
+						safety_stt <= '0';
+						--FSM_TRANSITION <= "S0IE";
+					end if;
 				end if;
 
 			-- ======= S1
@@ -155,41 +164,48 @@ FSM_comb : process(process_ID,safe_process_ID,cache_HM,curState,different_index)
 				if (process_ID = safe_process_ID) then								-- S
 					if (different_index and cache_HM = '0') then 					-- miss
 						safety_stt <= '1';
-						nextState <= s0;
-
+						nextState <= s1;
+						--FSM_TRANSITION <= "S1SM";
 					elsif (different_index and cache_HM = '1') then 				-- hit
 						safety_stt <= '0';
-						nextState <= s2;
-
+						nextState <= s3;
+						--FSM_TRANSITION <= "S1SH";
 					end if;
 				else																-- I
-					if (different_index and (cache_HM = '1' or cache_HM = '0')) then					-- miss
+					if (different_index and cache_HM = '0') then					-- miss
 						safety_stt <= '0';
-						nextState <= s3;
+						nextState <= s5;
+						--FSM_TRANSITION <= "S1IM";
+					elsif (different_index and cache_HM = '1') then					-- hit
+						safety_stt <= '0';
+						nextState <= s4;
+						--FSM_TRANSITION <= "S1IH";
 					end if;
 				end if;
+
 
 			-- ======= S2
 			when s2 =>
 				if (process_ID = safe_process_ID) then 								-- S
 					if (different_index and cache_HM = '0' ) then 					-- miss
 						safety_stt <= '1';
-						nextState <= s0;
-
+						nextState <= s1;
+						--FSM_TRANSITION <= "S2SM";
 					elsif (different_index and cache_HM = '1') then 				-- hit
 						safety_stt <= '0';
-						nextState <= s0;
-
+						nextState <= s1;
+						--FSM_TRANSITION <= "S2SH";
 					end if;
 				else																-- I
 					if (different_index and cache_HM = '0') then					-- miss
-						safety_stt <= '1';
-						nextState <= s0;
-
+						safety_stt <= '0';
+						nextState <= s5;
+						--FSM_TRANSITION <= "S2IM";
 					elsif (different_index and cache_HM = '1') then					-- hit
 						safety_stt <= '0';
-						nextState <= s0;
+						nextState <= s4;
 
+						--FSM_TRANSITION <= "S2IH";
 					end if;
 				end if;
 
@@ -198,19 +214,73 @@ FSM_comb : process(process_ID,safe_process_ID,cache_HM,curState,different_index)
 				if (process_ID = safe_process_ID) then 								-- S
 					if (different_index and cache_HM = '0' ) then 					-- miss
 						safety_stt <= '1';
-						nextState <= s0;
-
+						nextState <= s1;
+						--FSM_TRANSITION <= "S3SM";
 					elsif (different_index and cache_HM = '1') then 				-- hit
 						safety_stt <= '0';
-						nextState <= s0;
-
+						nextState <= s1;
+						--FSM_TRANSITION <= "S3SH";
 					end if;
 				else																-- I
-					if (different_index and (cache_HM = '1' or cache_HM = '0')) then					-- miss
+					if (different_index and cache_HM = '0' ) then					-- miss
+						safety_stt <= '1';
+						nextState <= s2;
+						--FSM_TRANSITION <= "S3IM";
+					elsif (different_index and cache_HM = '1') then					-- hit
 						safety_stt <= '0';
-						nextState <= s0;
+						nextState <= s2;
+						--FSM_TRANSITION <= "S3IH";
 					end if;
 				end if;
+
+			-- ======= S4
+			when s4 =>
+				if (process_ID = safe_process_ID) then								-- S
+					if (different_index and cache_HM = '0' ) then					-- miss
+						safety_stt <= '1';
+						nextState <= s1;
+						--FSM_TRANSITION <= "S4SM";
+					elsif (different_index and cache_HM = '1') then					-- hit
+						safety_stt <= '0';
+						nextState <= s1;
+						--FSM_TRANSITION <= "S4SH";
+					end if;
+				else																-- I
+					if (different_index and cache_HM = '0') then					-- miss
+						safety_stt <= '0';
+						nextState <= s2;
+						--FSM_TRANSITION <= "S4IM";
+					elsif (different_index and cache_HM = '1') then					-- hit
+						safety_stt <= '0';
+						nextState <= s2;
+						--FSM_TRANSITION <= "S4IH";
+					end if;
+				end if;
+
+			-- ======= S5
+			when s5 =>
+				if (process_ID = safe_process_ID) then 								-- S
+					if (different_index and cache_HM = '0' ) then 					-- miss
+						safety_stt <= '1';
+						nextState <= s1;
+						--FSM_TRANSITION <= "S5SM";
+					elsif (different_index and cache_HM = '1' ) then 				-- hit
+						safety_stt <= '1';
+						nextState <= s1;
+						--FSM_TRANSITION <= "S5SH";
+					end if;
+				else																-- I
+					if (different_index and cache_HM = '0') then					-- miss
+						safety_stt <= '0';
+						nextState <= s2;
+						--FSM_TRANSITION <= "S5IH";
+					elsif (different_index and cache_HM = '1') then					-- hit
+						safety_stt <= '0';
+						nextState <= s2;
+						--FSM_TRANSITION <= "S5IH";
+					end if;
+				end if;
+
 		end case;
 
 end process FSM_comb;
