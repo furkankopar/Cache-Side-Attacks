@@ -171,7 +171,7 @@ begin
                     else                                                       -- SM || H
                         safety_stt <= '1';
                     end if;
-                when s2 =>
+                when s3 =>
                     nextState  <= s0;
                     if process_ID = safe_process_ID AND cache_HM = '0' then    -- SM
                         safety_stt <= '1';
