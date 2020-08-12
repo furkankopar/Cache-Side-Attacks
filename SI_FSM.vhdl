@@ -45,10 +45,12 @@ entity SI_FSM is
 				clk				: in	STD_LOGIC;		-- System clock
 				rst				: in	STD_LOGIC;		-- System reset 
 				-- Cache hit and miss indicators
-				cache_H			: in	STD_LOGIC;		-- Cache hit signal
-				cache_M			: in	STD_LOGIC;		-- Cache miss signal
+				Hit_Sig_cache			: in	STD_LOGIC;		-- Cache hit signal
+				Miss_Sig_cache			: in	STD_LOGIC;		-- Cache miss signal
 				-- Cache read and write indicators
 				cache_OP		: in	STD_LOGIC;
+				-- signal of new address
+				cache_newAddr	: in	STD_LOGIC;
 				-- Cache address
 				cpu_addr		: in	UNSIGNED(CPU_ADDR_BITS - 1 downto 0);
 				-- Current process perfroming access to the cache
@@ -71,11 +73,18 @@ type STATE_MEM is array (CACHE_SETS - 1 downto 0) of states;
 signal FSM_mem : STATE_MEM;
 
 signal addr_index				: unsigned(INDEX_BITS - 1 downto 0);
+--signal prev_addr_index				: unsigned(INDEX_BITS - 1 downto 0);
 signal prev_addr_reg			: unsigned(CPU_ADDR_BITS - 1 downto 0);
-signal different_index			: std_logic;
+--signal different_index			: std_logic;
 signal safety_stt				: std_logic;
+signal Addr_check				: std_logic;
+--signal safety_stt				: std_logic;
 signal cache_HM					: std_logic;
-signal safeProcess				: boolean;
+
+signal safeProcessSig			: boolean;
+signal cache_R_op				: boolean;
+
+
 
 -- Counters
 signal reg_safe_count			: unsigned(63 downto 0);		-- count the occurrences of unsafe states
@@ -91,7 +100,7 @@ begin
 	--	Additionally, the address index signal is used to detect changes on the index-bits		|
 	--	 input to evaluate the array index to be used for the FSM computation.					|
 	---------------------------------------------------------------------------------------------
-	addr_index <= cpu_addr(OFFSET_BITS + INDEX_BITS - 1 downto OFFSET_BITS);
+	addr_index 		<= cpu_addr(OFFSET_BITS + INDEX_BITS - 1 downto OFFSET_BITS);
 
 	---------------------------------------------------------------------------------------------
 	--	state_memory: Initial state process														|
@@ -106,7 +115,7 @@ begin
 			mem_rst : for i in 0 to CACHE_SETS - 1 loop
 				FSM_mem(i) <= s0;	 -- Reset all the memory to s0 (start state)
 			end loop mem_rst;
-		elsif falling_edge(clk) and different_index = '1' then
+		elsif falling_edge(clk) and cache_newAddr = '1' then
 			FSM_mem(to_integer(addr_index)) <= nextState;	 -- Store the next state 
 		end if;
 	end process state_memory;
@@ -116,45 +125,10 @@ begin
 	--	This is primarily used to read the content of memory and retrieve the stored state of	|
 	--	 the FSM for the new index.																|
 	---------------------------------------------------------------------------------------------
-	state_register : process (cpu_addr)
+	curstate_read : process (cpu_addr)
 	begin
 		curState <= FSM_mem(to_integer(cpu_addr(OFFSET_BITS + INDEX_BITS - 1 downto OFFSET_BITS)));
-	end process state_register;
-	
-	---------------------------------------------------------------------------------------------
-	--	address_register: Process to detect changes on the address input						|
-	--	This is primarily used to detect any changes on the address input.						|
-	--	This helps determining when a transition on the FSM is needed.							|
-	--	This avoids additional unwanted transition when the cache_HM (in the HM_proc) changes	|
-	--	 during the same access.																|
-	--	This is possible when a miss occurs that the cache reports the miss, however, when		|
-	--	 the miss is mitigated, the cache reports a hit before the access is finished.			|
-	--	This change of miss/hit signals can cause transitions that are unwanted.				|
-	--	This process ensures that only at the first clock cycle of an access that transitions	|
-	--	 occur in the FSM.																		|
-	---------------------------------------------------------------------------------------------
-	address_register : process (clk, rst)
-	begin
-		if rst = '1' then
-			prev_addr_reg <= (others => '0');
-		elsif rising_edge(clk) then
-			prev_addr_reg <= cpu_addr;
-		end if;
-	end process address_register;
-	
-	---------------------------------------------------------------------------------------------
-	--	Marking the first clk cycle of an access by comparing the signals from the the address	|
-	--	 input and the index_REG_proc.															|
-	---------------------------------------------------------------------------------------------
-	different_index <= '0' when prev_addr_reg = cpu_addr or cache_OP = '1'
-							 else '1';
-							 
-	---------------------------------------------------------------------------------------------
-	--	Only when a miss occurs that a miss is reported.										|
-	---------------------------------------------------------------------------------------------
-	cache_HM <= '0' when cache_M = '1' AND cache_H = '0' and different_index = '1' else
-				'1' when cache_M = '0' AND cache_H = '1' and different_index = '1' else
-				'-';
+	end process curstate_read;
 	
 	---------------------------------------------------------------------------------------------
 	--	output: Checks the ID of the process then makes a descision.							|
@@ -163,38 +137,52 @@ begin
 	--	 process itself.																		|
 	---------------------------------------------------------------------------------------------
 	
-	safeProcess <= true when process_ID = safe_process_ID else false;
+	safeProcessSig <= true when process_ID = safe_process_ID else false;
 
-	output : process (safeProcess,process_ID, safe_process_ID, cache_HM, curState)
+	cache_HM <= '1' when Miss_Sig_cache = '0' AND Hit_Sig_cache = '1' else
+				'0';
+	
+	cache_R_op <= true when cache_OP = '0' else
+				false;
+
+	output : process (cache_newAddr,cache_R_op,safeProcessSig,cache_HM, curState)
 	begin
 
-			nextState <= s0;	--	all transitions are to the initital state, unless otherwise decided by the FSM
-			case curState is
-				when s0 =>		--	initial state
-					--	A cache hit or miss, regardless of the type of the proc (safe or not)
-					--	transitions from s0 are always to s1
-                    safety_stt <= '0';
-					if cache_HM = '0' or cache_HM= '1' then nextState	<= s1; end if;
-					--	Regardless, all transition out of this state is safe.
-					
-				when s1 =>		--	second stage
-					safety_stt <= '0';
-                    if safeProcess then
-						if cache_HM = '0' then  nextState	 <= s2; end if;
-                        if cache_HM = '1' then  nextState    <= s3; end if; 
-					else														 -- I
-						if cache_HM = '0' or cache_HM= '1' then nextState	<= s3; end if;
-					end if;
-				when s2 =>		--	first of the two third stage transitions
-					nextState	<= s0;
-					if (safeProcess AND (cache_HM = '1' or cache_HM = '0')) or (not safeProcess AND cache_HM = '1') then       -- SM || H
-                        safety_stt <= '1';
-                    end if;
-				when s3 =>		--	second of the two third stage transitions
-					nextState	<= s0;
-					if safeProcess AND cache_HM = '0' then	safety_stt <= '1'; end if; -- SM
-			end case;
-
+			nextState <= s1;	--	all transitions are to the initital state, unless otherwise decided by the FSM
+			safety_stt <= '0';
+			if (cache_newAddr = '1' and cache_R_op) then
+				--safety_stt <= '0';
+                case curState is
+    				when s0 =>		--	initial state
+    					--nextState <= s0;
+    					-- AMSHALsafety_stt <= '0';
+    					if cache_HM = '0' or cache_HM = '1' then nextState	<= s1; end if;
+    				when s1 =>		--	second stage
+    					-- AMSHALsafety_stt <= '0';
+                        if safeProcessSig then
+    						if cache_HM = '0' then  nextState	 <= s2; end if;
+                            if cache_HM = '1' then  nextState    <= s3; end if; 
+    					else														 -- I
+    						--if cache_HM = '0' or cache_HM= '1' then nextState	<= s3; end if;
+    						nextState	<= s3;
+    					end if;
+    				when s2 =>		--	first of the two third stage transitions
+   						-- AMSHALsafety_stt <= '0';
+    					if (safeProcessSig) or (not safeProcessSig AND cache_HM = '1') then       -- SM || H
+                            --nextState	<= s1; 
+                            safety_stt <= '1';
+                        else
+                        	if cache_HM = '1' then  safety_stt <= '1'; end if; 
+                        end if;
+    				when s3 =>
+    					-- AMSHAL safety_stt <= '0';
+    					--	second of the two third stage transitions
+    					if safeProcessSig AND cache_HM = '0' then	safety_stt <= '1'; end if; -- SM
+    				when others  =>
+    					--nextState <= s1;	--	all transitions are to the initital state, unless otherwise decided by the FSM
+						safety_stt <= '0';
+    			end case;
+    		end if;
 	end process output;
 	
 	---------------------------------------------------------------------------------------------
@@ -207,34 +195,13 @@ begin
 	begin
 		
 		if rst = '1' then
-			reg_safe_count <= (others => '0');
-		elsif clk'event then
+			safety <= '0';
+		elsif clk'event and clk = '1' then
 			safety <= safety_stt;
 		end if;
 
-		if rst = '1' then
-			reg_safeProc_count <= (others => '0');
-		elsif falling_edge(clk) and safeProcess AND different_index = '1' and safety_stt = '1' then
-			reg_safeProc_count <= reg_safeProc_count + 1;
-		end if;
-
-		if rst = '1' then
-			reg_safe_count <= (others => '0');
-		elsif falling_edge(clk) AND different_index = '1' and safety_stt = '1' then
-			reg_safe_count <= reg_safe_count + 1;
-		end if;
 		
-		if rst = '1' then
-			reg_index_count <= (others => '0');
-		elsif falling_edge(clk) AND different_index = '1' then
-			reg_index_count <= reg_index_count + 1;
-		end if;
 	end process safety_register;
-	
-	---------------------------------------------------------------------------------------------
-	--	Safety latch is used to maitain the safety output until the end of an access,			|
-	--	 will be removed later.																	|
-	---------------------------------------------------------------------------------------------
-	--safety <= safety_stt when different_index; --
+
 
 end RTL;
